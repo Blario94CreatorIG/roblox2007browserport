@@ -24,7 +24,6 @@ const MT = L.MT;
  * Shared state  one live bridge per joined place.
  * ---------------------------------------------------------- */
 const state = {
-  interp:null,          /* luaport interpreter (set by install()) */
   world:null,           /* WorldBuilder acting today */
   ui:null,              /* RBLXui instance */
   character:null,       /* runtime character marker object */
@@ -35,7 +34,7 @@ const state = {
   workspaceInst:null,   /* parsed Workspace inst (or fake) */
   lightingInst:null,
   playersInst:null,
-  playerInst:null,      /* Player1 fake model */
+  playerInst:null,      /* Player1 fake Player */
   humanInst:null,       /* Humanoid fake inst bound to character */
   torsoInst:null,       /* Torso fake inst bound to character */
   modelInst:null,       /* character model fake inst */
@@ -49,19 +48,21 @@ const state = {
   signals:new WeakMap(),     /* inst → {Touched:Sig, Died:Sig} */
   soundHandles:new Map(),   /* inst → {handle, inst} (iterated for 3D tracking) */
   scriptFibers:[],           /* {inst, fiber} launched Script fibers */
-  gearFibers:[],
   movers:new Set(),          /* looks integrated each Stepped */
   characterMovers:new Set(), /* BodyVelocity/BodyPosition under the character */
-  touchedCooldown:new WeakMap(),  /* look → {inst: until} */
+  watchSet:new Set(),        /* parts with a Touched listener */
   pendingExplosions:[],      /* Explosion instances waiting out the 0.1 s fuse */
+  explosions:[],             /* live Explosion visuals */
   debris:[],                 /* Debris:AddItem queue {inst, t} */
   playerTeam:null,           /* assigned Team instance */
   playerTeamColor:null,      /* BrickColor id (TeamColor) */
   teamsReady:false,          /* game tree has resolved Teams at least once */
   activeHint:null,           /* the Hint instance currently on screen */
+  activeMessage:null,        /* the Message instance currently on screen */
+  dayMinutes:null,           /* Lighting clock override (GetMinutesAfterMidnight) */
+  signals2:null,             /* {stepped: Signal} for the fake RunService */
   poseRev:0,                 /* bumped when any part pose changes (mouse ray cache) */
   mouseRay:null,             /* last mouse-ray signature {px,py,...,t} */
-  IIFE_DONE:false,
 };
 
 /* ------------------------------------------------------------
@@ -296,10 +297,10 @@ const BCMT={
  * ---------------------------------------------------------- */
 class Signal{
   constructor(name){ this.name=name||'signal'; this.list=[]; }
-  connect(fn){
+  connect(fn, ipCtx){
     if (!(fn&&(fn.lua||typeof fn==='function')))
       throw new L.LuaThrow('connect expects a function');
-    const ip=(L.currentIp&&L.currentIp())||state.interp;   /* env of the connecting script */
+    const ip=ipCtx||(L.currentIp&&L.currentIp())||L.sched.interp;   /* env of the connecting script */
     const entry={fn, active:true, ip};
     this.list.push(entry);
     if (ip){
@@ -307,13 +308,15 @@ class Signal{
       ip.__connections.push({sig:this, entry});
     }
     const sig=this;
-    return { [MT]:{ __index(args){
+    const conn={ [MT]:{ __index(args){
       const k=String(args[1]);
       if (k==='disconnect'||k==='Disconnect'){
         return mkM(()=>{ dropConnection(sig, entry); return []; });
       }
       return [undefined];
     }} };
+    conn.__sigEntry=entry;
+    return conn;
   }
   fire(args){
     const snapshot=this.list.slice();
@@ -358,7 +361,7 @@ function luaArray(arr){
   return t;
 }
 function launchFiber(fn, args){
-  const ip=(L.currentIp&&L.currentIp())||state.interp;
+  const ip=(L.currentIp&&L.currentIp())||L.sched.interp;
   if (!ip) return null;
   return ip.sched.launchFiber(fn, args||[], null, null, ip);
 }
@@ -858,7 +861,7 @@ const InstMT={
         return [mkM(a=>{ if (char()&&cls==='Humanoid') char().takeDamage(a[1]||0); return []; })];
       case 'Value':
         /* NumberValue/IntValue/BoolValue/StringValue/ObjectValue etc. */
-        if (/Value$/.test(cls)) return [inst.props.Value];
+        if (/Value$/.test(cls)) return [propToLua(inst.props.Value)];
         break;
     }
     /* class-specific live props */
@@ -951,11 +954,12 @@ const InstMT={
     if (cls==='Lighting'||inst.__fakeLighting){
       switch (key){
         case 'GetMinutesAfterMidnight': case 'getMinutesAfterMidnight':
-          return [mkM(()=>[state.dayMinutes!=null? state.dayMinutes : (timeOfDayMinutes())])];
+          return [mkM(()=>[timeOfDayMinutes()])];
         case 'SetMinutesAfterMidnight': case 'setMinutesAfterMidnight':
           return [mkM(a=>{
             const mins=Number(a[1])||0;
             state.dayMinutes=mins;
+            inst.props.TimeOfDay=formatTimeOfDay(mins);
             applyTimeOfDay(mins);
             return [];
           })];
@@ -971,6 +975,7 @@ const InstMT={
     if (cls==='Sound'){
       if (key==='SoundId'||key==='soundId'){
         const s=inst.props.SoundId;
+        if (typeof s==='string') return [s];
         if (s && s.text!==undefined) return [s.text];
         if (s && s.url!==undefined) return [s.url];
         if (s && s.binary!==undefined) return [s.binary];
@@ -986,6 +991,7 @@ const InstMT={
       }
     }
     if (cls==='RunService'||inst.__fakeRunService){
+      if (!state.signals2) state.signals2={stepped:new Signal('Stepped')};
       if (key==='Stepped') return [wrapSignal(state.signals2.stepped, 'Stepped')];
       if (key==='RenderStepped') return [wrapSignal(state.signals2.stepped, 'RenderStepped')];
     }
@@ -1093,6 +1099,8 @@ const InstMT={
     }
     if (cls==='Players'){
       if (key==='LocalPlayer') return [state.playerInst? wrap(state.playerInst) : undefined];
+      if (key==='PlayerAdded'||key==='playerAdded'||key==='PlayerRemoved'||key==='playerRemoved')
+        return [wrapSignal(touchedSignal(inst, key), key)];
       /* Players.NumPlayers  the harvester's pickPlayer() gates on it */
       if (key==='NumPlayers'||key==='numPlayers'){
         let n=0;
@@ -1206,6 +1214,10 @@ const InstMT={
       const LIVE=['TimeOfDay','Brightness','TopAmbientV9','BottomAmbientV9','SpotLightV9','ClearColor','CelestialBodiesShown'];
       if (LIVE.indexOf(key)>=0){
         inst.props[key]=v;
+        if (key==='TimeOfDay'){
+          const mins=parseTimeOfDay(v);
+          if (mins!=null) state.dayMinutes=mins;
+        }
         if (state.world&&state.world.applyLightingProps) state.world.applyLightingProps(inst.props);
         return;
       }
@@ -1559,20 +1571,25 @@ function mkInst(cls, name){
   return inst;
 }
 
-/* all descendants (not incl. self): exact tree order */
+/* root + descendants in exact tree order.  A child whose parent points at a
+ * different node (the fake Humanoid's limb aliases) is not traversed again:
+ * the limb already lives under the character Model. */
 function walkAll(inst){
-  const a=[];
+  const a=[inst];
   (function rec(x){
-    a.push(x);
-    for (const c of x.children) rec(c);
+    for (const c of x.children){
+      if (c.parent!==x) continue;
+      a.push(c); rec(c);
+    }
   })(inst);
   return a;
 }
-/* Parent/remove entry points must act on the instance itself too.  walkAll
- * excludes its root, so a Script/Part/Message parented directly to the
- * workspace used to never start, build or display. */
-function selfAndDescendants(inst){
-  return [inst].concat(walkAll(inst));
+/* descendants only (no root), same parent-identity guard */
+function* iterDesc(inst){
+  for (const c of inst.children){
+    if (c.parent!==inst) continue;
+    yield c; yield* iterDesc(c);
+  }
 }
 
 function viewLook(inst){
@@ -1719,7 +1736,7 @@ function syncShirts(){
 /* parented into the workspace subtree  bring it (and children) to life.
  * Parts first (engine ordering), then scripts/messages/explosions. */
 function attachToWorld(inst){
-  const list=selfAndDescendants(inst);
+  const list=walkAll(inst);
   for (const it of list) buildOrRestore(it);
   /* authored joints only become live once both referenced parts exist */
   for (const it of list) if (JOINT_CLASSES.has(it.cls)) syncJointInst(it, true);
@@ -1734,12 +1751,13 @@ function attachToWorld(inst){
 /* leaving world  mirrors the runner's destroy semantics */
 function detachFromWorld(inst, destroyed){
   const w=state.world;
-  for (const it of selfAndDescendants(inst)){
+  for (const it of walkAll(inst)){
     if (isPartLike(it)){
       if (destroyed&&it.props.PlayOnRemove===true) playOnRemoveSound(it);
       const look=w&&w.partLook? w.partLook.get(it) : null;
       if (look&&!look.destroyed&&w&&w.destroyPart) w.destroyPart(it);
       if (look) state.movers.delete(look);
+      state.watchSet.delete(it);
       it.__touchIn=false; it.__tc_terrain=false; it.__tc_char=false;
       clearContactEdges(look);
       if (it===state.torsoInst) continue;   /* fake parts never die by removal */
@@ -1765,22 +1783,29 @@ function detachFromWorld(inst, destroyed){
 
 function reparent(inst, newParent){
   if (!inst||inst===newParent) return;
+  const np=newParent||null;
+  if (inst.parent===np) return;
   if (inst===state.workspaceInst) return;            /* workspace never moves */
   const was=withinWorld(inst);
-  if (inst.parent){
-    const i=inst.parent.children.indexOf(inst);
-    if (i>=0) inst.parent.children.splice(i,1);
+  const oldParent=inst.parent;
+  if (oldParent){
+    const i=oldParent.children.indexOf(inst);
+    if (i>=0) oldParent.children.splice(i,1);
   }
-  inst.parent=newParent||null;
-  if (newParent) newParent.children.push(inst);
-  if (newParent===state.playersInst &&
+  inst.parent=np;
+  if (np) np.children.push(inst);
+  if (np===state.playersInst &&
       (inst.cls==='Player'||inst.__player||/^Player\d+$/i.test(String(inst.props&&inst.props.Name||''))))
     ensureBackpackForPlayer(inst);
   const now=withinWorld(inst);
   if (now&&!was) attachToWorld(inst);
-  else if (!now&&was) detachFromWorld(inst, !newParent);
+  else if (!now&&was) detachFromWorld(inst, !np);
   if (inst.cls==='Team') autoAssignTeams();
   syncCharacterMover(inst);
+  /* the bridge exposes ChildAdded/ChildRemoved on every instance; fire
+   * them after the child is fully built so waitForChild() finds it */
+  if (oldParent) fireEvent(oldParent, 'ChildRemoved', [wrap(inst)]);
+  if (np) fireEvent(np, 'ChildAdded', [wrap(inst)]);
 }
 
 /* ---------- Message / Explosion / Lighting side effects ---------- */
@@ -1886,7 +1911,25 @@ function playOnRemoveSound(inst){
 function applyTimeOfDay(mins){
   if (state.world&&state.world.applyTimeOfDay) state.world.applyTimeOfDay(Number(mins)||0);
 }
-function timeOfDayMinutes(){ return state.dayMinutes!=null? state.dayMinutes : 720; }
+function parseTimeOfDay(str){
+  const m=/^(\d{1,2}):(\d{1,2})(?::(\d{1,2}(?:\.\d+)?))?$/.exec(String(str||'').trim());
+  if (!m) return null;
+  const h=+m[1], mi=+m[2], s=m[3]!=null? +m[3] : 0;
+  if (h>23||mi>59||s>=60) return null;
+  return h*60+mi+s/60;
+}
+function formatTimeOfDay(mins){
+  let t=Number(mins); if (!isFinite(t)) t=720;
+  t=((t%1440)+1440)%1440;
+  const sec=Math.round(t*60)%86400;
+  const h=Math.floor(sec/3600), mi=Math.floor((sec%3600)/60), s=sec%60;
+  return (h<10?'0':'')+h+':'+(mi<10?'0':'')+mi+':'+(s<10?'0':'')+s;
+}
+function timeOfDayMinutes(){
+  if (state.dayMinutes!=null) return state.dayMinutes;
+  const fromProp=parseTimeOfDay(state.lightingInst&&state.lightingInst.props&&state.lightingInst.props.TimeOfDay);
+  return fromProp!=null? fromProp : 720;
+}
 
 /* ---------- part mutation helpers ---------- */
 /* Script CFrame/Position writes on a rigid welded body move the whole
@@ -2017,7 +2060,7 @@ function syncJointInst(inst, align){
 function syncJointsUnder(root){
   if (!root) return 0;
   let n=0;
-  for (const it of selfAndDescendants(root)) if (JOINT_CLASSES.has(it.cls)){
+  for (const it of walkAll(root)) if (JOINT_CLASSES.has(it.cls)){
     if (syncJointInst(it, true)) n++;
   }
   return n;
@@ -2025,7 +2068,7 @@ function syncJointsUnder(root){
 function dropJointsUnder(root){
   const w=state.world;
   if (!w||!w.jointRecs||!root) return;
-  for (const it of selfAndDescendants(root)) w.jointRecs.delete(it);
+  for (const it of walkAll(root)) w.jointRecs.delete(it);
   for (const [inst,rec] of Array.from(w.jointRecs)){
     if (rec.a===root||rec.b===root||isDescendantOf(rec.a,root)||isDescendantOf(rec.b,root))
       w.jointRecs.delete(inst);
@@ -2252,8 +2295,17 @@ function wrapSignal(sig){
           return [mkM(()=>{ sig.list.length=0; return []; })];
         case 'wait': case 'Wait':
           return [L.mkNative(function*(ip,args){
-            yield {t:'wait', d:0};
-            return (sig.lastVals&&sig.lastVals.length)? sig.lastVals.slice() : [L.sched.time];
+            let fired=false, vals=null;
+            const handler=L.mkNative(function*(hIp,hArgs){
+              fired=true; vals=hArgs||[]; return [];
+            },true);
+            const conn=sig.connect(handler, ip);
+            try {
+              while (!fired) yield {t:'wait', d:0};
+            } finally {
+              if (conn.__sigEntry) dropConnection(sig, conn.__sigEntry);
+            }
+            return vals||[];
           },true)];
       }
       return [undefined];
@@ -2327,7 +2379,6 @@ function tickContacts(dt){
       const inside=(p.x+0.9>a.min.x&&p.x-0.9<a.max.x&&
                     p.z+0.9>a.min.z&&p.z-0.9<a.max.z&&
                     p.y+1.9>a.min.y&&p.y-1.9<a.max.y);
-      look.__tc_char2=inside;
       if (inside&&!look.__tc_char){
         look.__tc_char=true;
         fireTouched(inst, wrap(state.torsoInst));
@@ -2446,7 +2497,9 @@ function fireStepped(dt){
  * -------------------------------------------------------------- */
 function firePlayerAdded(){
   if (!state.playersInst||!state.playerInst) return 0;
-  return fireEvent(state.playersInst, 'ChildAdded', [wrap(state.playerInst)]);
+  const p=wrap(state.playerInst);
+  return fireEvent(state.playersInst, 'ChildAdded', [p])+
+         fireEvent(state.playersInst, 'PlayerAdded', [p]);
 }
 function firePlayerChanged(prop){
   if (!state.playerInst) return 0;
@@ -2545,9 +2598,6 @@ function chooseSpawnPad(pads, parsed){
   else pool=pads.filter(p=>padColor(p)===194);
   if (!pool.length) pool=pads;
   return pool[Math.floor(Math.random()*pool.length)];
-}
-function teamForColor(id){
-  return teamInstances().find(t=>teamColorId(t)===(id|0))||null;
 }
 function brickColorIdOf(v){
   if (typeof v==='number' && isFinite(v)) return v|0;
@@ -2649,7 +2699,7 @@ function buildGameTree(parsed){
    * The local player is named after the start-page username (startpage.js). */
   const localName=(window.RBLXplayer&&window.RBLXplayer.name)||'Player1';
   let player=childByName(pl,localName)||childByName(pl,'Player1');
-  if (!player){ player=mkInst('Model',localName); player.parent=pl; pl.children.push(player); }
+  if (!player){ player=mkInst('Player',localName); player.parent=pl; pl.children.push(player); }
   player.__player=true;
   state.playerInst=player;
   const players=pl.children.filter(c=>c===player||c.cls==='Player'||c.__player);
@@ -3030,6 +3080,7 @@ function launchScript(inst, onUnsupported){
   } catch (e){
     console.error('[rbxenv] '+sName(inst)+': parse error: '+e.message);
     inst.__launched=false;
+    if (onUnsupported){ try { onUnsupported(e); } catch(_){} }
     return;
   }
   const gen=(function*(){
@@ -3038,14 +3089,6 @@ function launchScript(inst, onUnsupported){
   const fiber=L.sched.launchGen(gen, ()=>{}, onUnsupported||null);
   state.scriptFibers.push({inst, fiber});
   return fiber;
-}
-
-function launchScriptsUnder(root){
-  let n=0;
-  for (const it of walkAll(root)){
-    if (isRunnableScript(it)&&launchScript(it)) n++;
-  }
-  return n;
 }
 
 /* ================================================================
@@ -3065,7 +3108,17 @@ function spawnFromXml(xml, opts){
   for (const r of roots){
     r.parent=state.workspaceInst;
     state.workspaceInst.children.push(r);
-    if (opts.cf) for (const p of walkAll(r)) if (isPartLike(p)) placePart(p, opts.cf);
+    if (opts.cf){
+      /* opts.cf poses the model's first part; keep every other part's
+       * offset relative to it instead of collapsing a multi-part model. */
+      const parts=walkAll(r).filter(isPartLike);
+      if (parts.length){
+        const pose=cfRec(opts.cf)||cfIdentity();
+        const oldRoot=cfRec(parts[0].props.CFrame)||cfIdentity();
+        const delta=cfMulCF(pose, cfInverse(oldRoot));
+        for (const p of parts) placePart(p, cfMulCF(delta, cfRec(p.props.CFrame)||cfIdentity()));
+      }
+    }
     attachToWorld(r);
     made.push(r);
   }
@@ -3081,19 +3134,21 @@ function spawnFromXml(xml, opts){
  * place lifecycle
  * ============================================================== */
 function forPlace(parsed, world, ui, character){
+  /* a failed/repeated join must not leave the previous place's fibers or
+   * looping sounds running under the new DataModel */
+  for (const e of state.scriptFibers) if (e.fiber) e.fiber.state='dead';
+  for (const inst of Array.from(state.soundHandles.keys())) soundStop(inst);
+  if (state.ui&&state.ui.hideSystemMessage) state.ui.hideSystemMessage();
   state.world=world||null;
   state.ui=ui||null;
   state.parsed=parsed||null;
-  state.interp=null;
   state.wrapCache=new WeakMap();
   state.wrpInfo=new WeakMap();
   state.signals=new WeakMap();
   state.soundHandles=new Map();
-  state.touchedCooldown=new WeakMap();
   state.movers=new Set();
   state.watchSet=new Set();
   state.scriptFibers=[];
-  state.gearFibers=[];
   state.explosions=[];
   state.pendingExplosions=[];
   state.debris=[];
@@ -3103,6 +3158,8 @@ function forPlace(parsed, world, ui, character){
   state.teamsReady=false;
   if (state.ui&&state.ui.hideHint) state.ui.hideHint();
   state.activeMessage=null;
+  state.mouseRay=null;
+  state.poseRev=0;
   mouseState.sig={};
   mouseState.target=null;
   mouseState.leftDown=false;
@@ -3140,12 +3197,9 @@ function launchPlaceScripts(onUnsupported){
   return n;
 }
 
-/* launch scripts living directly on a parsed subtree (place tools etc.) */
-function launchTreeScripts(root, onUnsupported){ return root? launchScriptsUnder(root) : 0; }
-
 window.RBLXenv={
   state,
-  forPlace, setCharacter, fireStepped, launchPlaceScripts, launchTreeScripts,
+  forPlace, setCharacter, fireStepped, launchPlaceScripts,
   firePlayerAdded, firePlayerChanged, tickScripts,
   launchScript, instanceNew, spawnFromXml,
   wrap, unwrap, viewLook, rebuild:attachToWorld,

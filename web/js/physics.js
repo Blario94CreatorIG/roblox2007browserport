@@ -217,6 +217,12 @@ class Humanoid {
   step(dt, input){
     const c=this.c;
     if (!c.alive) return;
+    /* Humanoid.WalkSpeed/JumpPower are scripted through the Lua bridge
+     * (rbxenv writes c.walkSpeed/c.jumpVelocity); the controller owns the
+     * movement values, so mirror them every step. */
+    if (typeof c.walkSpeed==='number' && isFinite(c.walkSpeed)) this.walkSpeed=c.walkSpeed;
+    if (typeof c.jumpVelocity==='number' && isFinite(c.jumpVelocity)) this.jumpPower=c.jumpVelocity;
+    this.climbSpeed=this.walkSpeed*0.7;
     /* rides: dynamic assemblies (beacon pads, debris stacks) translate the
      * character standing on them before its own gravity acts */
     if (window.RBLXdyn){

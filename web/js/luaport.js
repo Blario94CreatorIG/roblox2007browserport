@@ -56,7 +56,12 @@ function lex(src){
         const close=']'+'='.repeat(lvl)+']';
         const end=src.indexOf(close,start);
         if (end<0) fail('unterminated long string');
-        toks.push({t:'str',v:src.slice(start,end)});
+        let str=src.slice(start,end);
+        /* Lua drops the first newline immediately after the opening bracket */
+        if (str[0]==='\n') str=str.slice(1);
+        else if (str[0]==='\r'&&str[1]==='\n') str=str.slice(2);
+        else if (str[0]==='\n'&&str[1]==='\r') str=str.slice(2);
+        toks.push({t:'str',v:str});
         i=end+close.length; continue;
       }
     }
@@ -86,10 +91,12 @@ function lex(src){
         if (src[j]==='\\'){
           const e=src[j+1]; j+=2;
           if (/^[0-9]$/.test(e)){
-            let oct=e; while (j<n&&/[0-9]/.test(src[j])&&oct.length<3){ oct+=src[j]; j++; }
-            s+=String.fromCharCode(parseInt(oct,8)); continue;
+            /* Lua 5.1 \ddd is decimal, not octal */
+            let dec=e; while (j<n&&/[0-9]/.test(src[j])&&dec.length<3){ dec+=src[j]; j++; }
+            s+=String.fromCharCode(parseInt(dec,10)); continue;
           }
-          s+= e==='n'? '\n' : e==='t'? '\t' : e==='r'? '\r' : e;
+          s+= e==='a'? '\x07' : e==='b'? '\b' : e==='f'? '\f' :
+              e==='n'? '\n' : e==='t'? '\t' : e==='r'? '\r' : e==='v'? '\v' : e;
           continue;
         }
         s+=src[j]; j++;
@@ -246,13 +253,15 @@ function parse(src){
   }
 
   /* precedence: or < and < cmp < concat < addsub < muldiv < unary < pow < postfix */
-  function expr(){ return and_or(); }
-  function and_or(){
+  function expr(){ return or_expr(); }
+  function or_expr(){
+    let a=and_expr();
+    while (atkw('or')){ next(); a={k:'or',a,b:and_expr()}; }
+    return a;
+  }
+  function and_expr(){
     let a=cmp_expr();
-    for(;;){
-      const t=peek();
-      if (t.t==='kw'&&(t.v==='and'||t.v==='or')){ next(); a={k:t.v,a,b:cmp_expr()}; } else break;
-    }
+    while (atkw('and')){ next(); a={k:'and',a,b:cmp_expr()}; }
     return a;
   }
   function cmp_expr(){
@@ -349,7 +358,7 @@ function parse(src){
       if (at('[')){ next(); const kk=expr(); eok(']'); eok('='); rows.push({kk,vv:expr(),array:false}); }
       else {
         const t=peek();
-        if (t.t==='name'&&toks[p+1].t==='op'&&toks[p+1].v==='='){
+        if (t.t==='name'&&toks[p+1]&&toks[p+1].t==='op'&&toks[p+1].v==='='){
           const nm=next().v; next(); rows.push({kk:{k:'str',v:nm},vv:expr(),array:false});
         } else {
           rows.push({vv:expr(),array:true});
@@ -421,30 +430,25 @@ LuaTable.key=function(x){
     default: return x;
   }
 };
-/* next: iterative protocol used by next()/pairs(); array part first */
+/* next: iterative protocol used by next()/pairs(); array part first.
+ * The array scan must continue past holes: a nil at index 1 does not end
+ * iteration while 2..n still have values. */
 LuaTable.next=function(t,k){
-  if (k===undefined||k===null){
-    if (t.a.length>1&&t.a[1]!==undefined) return [1,t.a[1]];
-    return hashFirst(t);
+  const a=t.a;
+  let start=0;
+  if (k===undefined||k===null) start=1;
+  else if (typeof k==='number'&&Number.isInteger(k)&&k>=1&&k<a.length) start=k+1;
+  if (start){
+    for (let i=start;i<a.length;i++) if (a[i]!==undefined) return [i,a[i]];
   }
-  if (typeof k==='number'&&Number.isInteger(k)&&k>=1){
-    /* scan forward past holes to the next present array entry */
-    if (k+1<t.a.length){
-      for (let i=k+1;i<t.a.length;i++){
-        if (t.a[i]!==undefined) return [i,t.a[i]];
-      }
-    }
-  }
-  const stored=LuaTable.key(k);
   const ks=[...t.h.keys()];
-  const idx=ks.indexOf(stored);
+  let idx=-1;
+  if (k!==undefined&&k!==null){
+    const stored=LuaTable.key(k);
+    idx=ks.indexOf(stored);
+  }
   for (let i=idx+1;i<ks.length;i++){ const e=t.h.get(ks[i]); return [e.k,e.v]; }
   return [undefined];
-  function hashFirst(tt){
-    const ks=[...tt.h.keys()];
-    if (ks.length){ const e=tt.h.get(ks[0]); return [e.k,e.v]; }
-    return [undefined];
-  }
 };
 
 function truthy(v){ return !(v===undefined||v===null||v===false); }
@@ -524,6 +528,8 @@ function getMT(v){
 }
 /* meta lookup works for LuaTable metatables AND plain bridge MT objects */
 function mtGet(mt,k){ return mt instanceof LuaTable? mt.get(k) : (mt? mt[k] : undefined); }
+/* Lua closures are objects ({lua:true}), not JS functions */
+function isCallable(f){ return typeof f==='function'||!!(f&&f.lua); }
 const MTNAME={'+':'__add','-':'__sub','*':'__mul','/':'__div','%':'__mod','^':'__pow'};
 function luaEq(a,b){
   if (a===b) return true;
@@ -561,9 +567,9 @@ class Interp{
       const mt=o.mt;
       if (mt){
         const h=mtGet(mt,'__index');
-        if (h!==undefined&&(typeof h==='function'||h instanceof LuaTable)){
-          if (typeof h==='function') return (yield* this.callValue(h,[o,k]))[0];
-          return h.get(k);
+        if (h!==undefined&&h!==null){
+          if (isCallable(h)) return (yield* this.callValue(h,[o,k]))[0];
+          if (h instanceof LuaTable) return h.get(k);
         }
       }
       return undefined;
@@ -578,10 +584,11 @@ class Interp{
       const imt=o[MT];
       if (imt){
         const h=imt.__index;
-        if (typeof h==='function'){
+        if (isCallable(h)){
           const r=yield* this.callValue(h,[o,k]);
           return r&&r.length? r[0] : undefined;
         }
+        if (h instanceof LuaTable) return h.get(k);
         return undefined;
       }
       const v=o[k];
@@ -591,12 +598,14 @@ class Interp{
   }
   *rawNewindex(o,k,v){
     if (o instanceof LuaTable){
+      /* Lua only consults __newindex when the key is absent */
+      if (o.get(k)!==undefined){ o.set(k,v); return; }
       const mt=o.mt;
       if (mt){
         const h=mtGet(mt,'__newindex');
-        if (h!==undefined&&(typeof h==='function'||h instanceof LuaTable)){
-          if (typeof h==='function'){ yield* this.callValue(h,[o,k,v]); return; }
-          h.set(k,v); return;
+        if (h!==undefined&&h!==null){
+          if (isCallable(h)){ yield* this.callValue(h,[o,k,v]); return; }
+          if (h instanceof LuaTable){ h.set(k,v); return; }
         }
       }
       o.set(k,v); return;
@@ -604,8 +613,10 @@ class Interp{
     if (o&&typeof o==='object'){
       const imt=o[MT];
       if (imt){
-        if (typeof imt.__newindex==='function'){ yield* this.callValue(imt.__newindex,[o,k,v]); return; }
-        if (imt.__newindex===null) return;          /* bridge forbids writes */
+        const h=imt.__newindex;
+        if (isCallable(h)){ yield* this.callValue(h,[o,k,v]); return; }
+        if (h instanceof LuaTable){ h.set(k,v); return; }
+        if (h===null) return;          /* bridge forbids writes */
       }
     }
     throw new LuaThrow('attempt to assign into a '+typeName(o)+' value');
@@ -748,12 +759,14 @@ class Interp{
         if (!Number.isFinite(a)||!Number.isFinite(b)||!Number.isFinite(step))
           throw new LuaThrow("'for' bounds must be numbers");
         if (step===0) throw new LuaThrow("'for' step is zero");
+        let n=0;
         for (let v=a; step>0? v<=b : v>=b; v+=step){
           const isc=newScope(sc);
           isc.vars.set(st.v,v);
           const r=yield* this.execBlock(st.body,isc);
           if (r&&r.brk) break;
           if (r&&r.ret) return {ret:r.ret};
+          if (++n%4096===0) yield {t:'spin'};
         }
         return null;
       }
@@ -762,6 +775,7 @@ class Interp{
         const f=ex[0];
         const s=ex.length>1? ex[1] : undefined;
         let ctrl=ex.length>2? ex[2] : undefined;
+        let n=0;
         for(;;){
           const rv=(yield* this.callValue(f,[s,ctrl]));
           if (!truthy(rv[0])) break;
@@ -771,6 +785,7 @@ class Interp{
           const r=yield* this.execBlock(st.body,isc);
           if (r&&r.brk) break;
           if (r&&r.ret) return {ret:r.ret};
+          if (++n%4096===0) yield {t:'spin'};
         }
         return null;
       }
@@ -1236,7 +1251,10 @@ function installStd(interp){
   });
   N('unpack',args=>{
     const t=args[0]; if (!(t instanceof LuaTable)) return [];
-    const a=toNum(args[1])||1, b=args[2]!=null? (toNum(args[2])||t.length) : t.length;
+    let a=args[1]!==undefined? toNum(args[1]) : 1;
+    let b=args[2]!==undefined? toNum(args[2]) : t.length;
+    if (a===undefined) a=1;
+    if (b===undefined) b=t.length;
     const out=[]; for (let i=a;i<=b;i++) out.push(t.get(i));
     return out;
   });
@@ -1324,7 +1342,7 @@ function installStd(interp){
   sj('reverse',a=>[tostring(a[0]).split('').reverse().join('')]);
   sj('format',a=>{
     const f=tostring(a[0]); let ai=1;
-    const out=f.replace(/%%|%(?:([-+ #0]*)(\d+|\*)?)?(?:\.(\d+|\*))?([dsfxXgeEgcs])/g,(m,flags,width,prec,conv)=>{
+    const out=f.replace(/%%|%(?:([-+ #0]*)(\d+|\*)?)?(?:\.(\d+|\*))?([diusofxXgeEGcsq])/g,(m,flags,width,prec,conv)=>{
       if (m==='%%') return '%';
       if (width==='*') width=String(toNum(a[ai++]));
       if (prec==='*') prec=String(toNum(a[ai++]));
@@ -1340,12 +1358,29 @@ function installStd(interp){
           s0=(v<0?'-':'')+s0;
           break;
         }
+        case 'u': {
+          const v=Math.round(toNum(arg)||0);
+          s0=Math.abs(v).toString();
+          if (P!=null) s0=s0.padStart(P,'0');
+          break;
+        }
+        case 'o': {
+          const v=Math.round(toNum(arg)||0);
+          s0=Math.abs(v).toString(8);
+          if (P!=null) s0=s0.padStart(P,'0');
+          if (v<0) s0='-'+s0;
+          break;
+        }
         case 'f': { const v=toNum(arg)||0; s0=v.toFixed(P!=null?P:6); break; }
-        case 'g': { s0=fmtNum(toNum(arg)||0); break; }
+        case 'g': case 'G': { s0=fmtNum(toNum(arg)||0); if (conv==='G') s0=s0.toUpperCase(); break; }
         case 'e': case 'E': { s0=(toNum(arg)||0).toExponential(P!=null?P:6); if (conv==='E') s0=s0.toUpperCase(); break; }
         case 'x': { const v=Math.round(toNum(arg))||0; s0=Math.abs(v).toString(16); if (v<0) s0='-'+s0; break; }
         case 'X': { const v=Math.round(toNum(arg))||0; s0=Math.abs(v).toString(16).toUpperCase(); if (v<0) s0='-'+s0; break; }
         case 's': { s0=tostring(arg); if (P!=null) s0=s0.slice(0,P); break; }
+        case 'q': {
+          s0='"'+tostring(arg).replace(/[\\"\n\r\t]/g,c=>({'\\':'\\\\','"':'\\"','\n':'\\n','\r':'\\r','\t':'\\t'})[c])+'"';
+          break;
+        }
         case 'c': return String.fromCharCode(toNum(arg)||0);
         default: return m;
       }
@@ -1380,11 +1415,16 @@ function installStd(interp){
   });
   sj('gmatch',a=>{
     const s=tostring(a[0]), pat=tostring(a[1]);
-    let pos=0;
+    let pos=0, done=false;
     return [mkNative(()=>{
+      if (done) return [undefined];
       const m=patternFind(s,pat,pos,false);
       if (!m) return [undefined];
-      pos=m.end;
+      if (m.end===m.start){
+        /* empty match: emit once, then advance so the iterator terminates */
+        if (m.end>=s.length) done=true;
+        else pos=m.end+1;
+      } else pos=m.end;
       const caps=capValues(s,m);
       return caps.length? caps : [s.slice(m.start,m.end)];
     })];
@@ -1410,7 +1450,8 @@ function installStd(interp){
           return caps[+d-1]!=null? caps[+d-1] : x;
         });
       } else if (repl instanceof LuaTable){
-        const v=repl.get(whole);
+        /* Lua uses the first capture as the key, or the whole match */
+        const v=repl.get(caps.length? caps[0] : whole);
         if (v===undefined||v===null) keep=true;
         else rep=tostring(v);
       } else if (typeof repl==='function'||(repl&&repl.lua)){
@@ -1546,10 +1587,8 @@ function installStd(interp){
     if (!(f&&(f.lua||typeof f==='function'))) throw new LuaThrow('bad argument #1 to create (function expected)');
     return [{__co:true,id:tableSeq++,f,status:'suspended',gen:null,fiber:null,resumeVal:null}];
   }));
-  coT.set('resume',mkNative(function*(ip,args){
-    const co=args[0];
+  function coResume(ip,co,rest){
     if (!co||!co.__co) throw new LuaThrow('bad argument #1 to resume (coroutine expected)');
-    const rest=args.slice(1);
     if (co.status==='dead') return [false,'cannot resume dead coroutine'];
     if (co.status!=='suspended') return [false,'cannot resume non-suspended coroutine'];
     if (!co.gen){
@@ -1559,7 +1598,20 @@ function installStd(interp){
       co.resumeVal=rest;
     }
     return ip.sched.stepInline(co);
+  }
+  coT.set('resume',mkNative(function*(ip,args){
+    return coResume(ip,args[0],args.slice(1));
   },true));
+  coT.set('wrap',mkNative(args=>{
+    const f=args[0];
+    if (!(f&&(f.lua||typeof f==='function'))) throw new LuaThrow('bad argument #1 to wrap (function expected)');
+    const co={__co:true,id:tableSeq++,f,status:'suspended',gen:null,fiber:null,resumeVal:null};
+    return [mkNative(function*(ip,callArgs){
+      const r=coResume(ip,co,callArgs);
+      if (!r[0]) throw new LuaThrow(r[1]);
+      return r.slice(1);
+    },true)];
+  }));
   coT.set('yield',mkNative(function*(ip,args){
     const resolved=(yield {t:'coyield',ret:args});
     return resolved&&resolved.length? resolved : [];
@@ -1714,7 +1766,8 @@ function run(prog,onDone,onUnsupported){
   const interp=SCHED.interp;
   const gen=(function*(){
     const sc=newScope(null);
-    return (yield* interp.execBlock(prog,sc));
+    const r=yield* interp.execBlock(prog,sc);
+    return r&&r.ret? r.ret : [];
   })();
   return SCHED.launchGen(gen,onDone,onUnsupported);
 }
