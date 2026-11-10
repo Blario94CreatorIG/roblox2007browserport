@@ -3,8 +3,8 @@
 **[Play it in your browser](https://raul488.github.io/Roblox-March-2007-Browser-Port-/)**
 
 The March 2007 client rebuilt for HTML/JS/WebGL. Engine constants, script
-behavior and content come from the decompilation and the shipped
-content/place files.
+behavior and content come from the decompilation and the shipped content
+and place files.
 
 Built with opencode. The original client is MaximumADHD's
 [Roblox_0.3.368.0](https://github.com/MaximumADHD/Roblox_0.3.368.0).

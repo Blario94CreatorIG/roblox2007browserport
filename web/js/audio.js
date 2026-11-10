@@ -126,11 +126,8 @@ class AudioBus {
         }, 0);
       });
     } else {
-      p=(/^content/.test(url))
-        ? fetch(url).then(r=>{ if(!r.ok) throw new Error('404 '+url); return r.arrayBuffer(); })
-          .then(ab=> this.ensureCtx().decodeAudioData(ab))
-        : fetch(url).then(r=>{ if(!r.ok) throw new Error('404 '+url); return r.arrayBuffer(); })
-          .then(ab=> this.ensureCtx().decodeAudioData(ab));
+      p=fetch(url).then(r=>{ if(!r.ok) throw new Error('404 '+url); return r.arrayBuffer(); })
+                 .then(ab=> this.ensureCtx().decodeAudioData(ab));
     }
     p=p.then(buf=>{ this.buffers.set(url, buf); this.pending.delete(url); return buf; })
        .catch(err=>{ this.pending.delete(url); throw err; });
@@ -171,7 +168,7 @@ class AudioBus {
     opts=opts||{};
     const url=this.resolve(name);
     const vol=opts.volume!=null?opts.volume:1;
-    return this.load(url).then(buf=>{ if(!opts.mute) this.playBuf(buf,{volume:vol,position:opts.position,loop:opts.loop,onended:opts.onended}); return true; })
+    return this.load(url).then(buf=>{ if(!opts.mute) this.playBuf(buf,{volume:vol,position:opts.position,loop:opts.loop}); return true; })
                          .catch(()=>false);   // missing file: silent like an engine no-op
   }
 

@@ -11,7 +11,7 @@
  *                              (ported as a day tint cycle)
  *   - 4× team beacon scripts  → not ported (they drive team play and
  *                              BodyPosition movers; single-player no-op
- *                               see PORT.md)
+ *                               see AGENTS.md)
  *  BattleArmorScript         → touch doubles MaxHealth + full heal
  * ============================================================ */
 (function(){

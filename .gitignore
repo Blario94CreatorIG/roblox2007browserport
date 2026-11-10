@@ -12,3 +12,6 @@ desktop.ini
 # Node (if tooling is added later)
 node_modules/
 npm-debug.log*
+
+# Local agent instructions (the workspace copy lives outside the repo)
+/web/AGENTS.md

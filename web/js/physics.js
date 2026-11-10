@@ -2,7 +2,7 @@
  * physics.js  Humanoid kinematic solver.
  * The classic Humanoid ran a custom kinematic stepper: gravity
  * 196.2 studs/s², walkspeed 16, jump impulse 50 (canonical 2007
- * values  see PORT.md), axis-separated AABB sweeps with auto
+ * values  see AGENTS.md), axis-separated AABB sweeps with auto
  * step-up onto 2-stud ledges. World colliders come from the
  * parsed place (world.colliders), never approximated by hand.
  * ============================================================ */

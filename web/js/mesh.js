@@ -46,11 +46,7 @@ function parseMesh(text){
       uv [d+0]=nums[s+6]; uv [d+1]=nums[s+7]; uv [d+2]=nums[s+8];
     }
   }
-  return { version: major + '.' + minor, faceCount, positions: pos, normals: nor, uvs: uv,
-           /* meshes are authored in engine units; Roblox uses studs scale 1/64 per engine docs
-               the 2007 avatar meshes are however self-consistent with a common magic scale
-              that the renderer steps in with the part bbox; world.js normalizes against Part.size. */
-           scaleFor(partSize){ return meshScale(partSize, this); } };
+  return { version: major + '.' + minor, faceCount, positions: pos, normals: nor, uvs: uv };
 }
 
 /* camera mesh spans come from this engine's own mesher: choose axis scale so bounding box spans match part size */

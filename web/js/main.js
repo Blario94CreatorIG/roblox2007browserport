@@ -4,7 +4,7 @@
  *   pick a bundled place → parse XML → build world/player →
  *   StarterPack/HopperBin hotbar → 60Hz Stepped loop + render.
  * Everything engine-specific lives in the other modules; where a
- * constant is not in the decomp it is flagged in PORT.md.
+ * constant is not in the decomp it is flagged in AGENTS.md.
  * ============================================================ */
 (function(){
 "use strict";
@@ -299,6 +299,7 @@ async function spawn(parsed){
   const name=(window.RBLXplayer&&window.RBLXplayer.name)||'Player1';
   character=new window.RBLXcharacter.Character(scene, world, name);
   world.character=character;
+  firstPerson=false;      /* a respawn after a first-person death must re-hide the rig */
   await character.load();
   /* start-page body colors (startpage.js)  recolor on every LoadCharacter */
   character.applyBodyColors(window.RBLXplayer&&window.RBLXplayer.colors);
@@ -328,7 +329,6 @@ async function spawn(parsed){
   }
   /* humanoidSound: the Jumping event plays button.wav (one per jump req) */
   character.onJumped=()=>window.Sounds.sound('button.wav', {volume:0.4});
-  character.onLanded=()=>{};
   character.onDeath=()=>{
     ui.notify('You died.');
     if (sjobs) sjobs.registerWipeout();
@@ -576,7 +576,6 @@ function render(dt){
       firstPerson=fp;
       character.group.visible=!fp;
     }
-    character.nameTag && (character.nameTag.position.y=3.8);
   } else if (world){
     const t=performance.now()*0.0001;
     camera.position.set(Math.cos(t)*60, 30, Math.sin(t)*60);

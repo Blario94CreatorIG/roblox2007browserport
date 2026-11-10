@@ -335,9 +335,7 @@ function parseRbx(text){
       if (target) it.props[nm]=target;
     }
   }
-  return {doc, root, instances, byRef, deserialize:refs=>({
-    *iter(){ /* placeholder */ }
-  })};
+  return {doc, root, instances, byRef};
 }
 /* resolve a Ref property after load: returns RbxInstance or null */
 function resolve(refObj, parsed){ return refObj? (parsed.byRef.get(refObj)||null) : null; }

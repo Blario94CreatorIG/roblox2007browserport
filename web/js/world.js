@@ -146,7 +146,7 @@ for (const k in SURFACE_NAMES) SURFACE_BY_NAME[SURFACE_NAMES[k]]=+k;
  * blast centre, linearly down to 0 at BlastRadius.  The decomp's blast
  * pass only applies the pressure impulse (there is no Health write in
  * FUN_00604150/FUN_006029c0), so this is the era's damage model layered
- * on top  see PORT.md §12. */
+ * on top  see AGENTS.md §12. */
 const BLAST_DAMAGE=100;
 function surfToken(v, d){
   if (typeof v==='number' && isFinite(v)){ const t=v|0; return (t>=0&&t<=9)?t:(d||0); }
@@ -228,7 +228,6 @@ function wedgeGeometry(size, scl){
   g.computeVertexNormals();
   return g;
 }
-function sphereGeometry(r){ return new THREE.SphereGeometry(r, 24, 16); }
 /* RBX::View::SphereMesh variations are keyed by the full extent vector
  * the classic ball/sphere-shape part is an ellipsoid fit to size, not a
  * max-dimension sphere scaled down. */
@@ -1077,7 +1076,7 @@ class WorldBuilder {
      * renderer.  Weld(2)/Glue(1) are joint types: the atlas X/blob is the
      * Surface Tool cursor in Studio, and the default noob's Weld torso
      * sides render as solid brick colour in-game (see the 2007 screenshots
-     * in PORT.md).  Spawn/hinge/motor/stepping are plain too. */
+     * in AGENTS.md).  Spawn/hinge/motor/stepping are plain too. */
     const artRow={3:0, 4:1};
     const anyArt=faceKeys.some(f=>artRow[f.token]!=null);
     const hasTexture = anyArt;
@@ -1289,12 +1288,6 @@ class WorldBuilder {
     const key='B|'+size.x+'|'+size.y+'|'+size.z;
     let g=this.geometryCache.get(key);
     if (!g){ g=new THREE.BoxGeometry(size.x,size.y,size.z); this.geometryCache.set(key,g); }
-    return g;
-  }
-  _geoSphere(r){
-    const key='S|'+r.toFixed(3);
-    let g=this.geometryCache.get(key);
-    if (!g){ g=sphereGeometry(r); this.geometryCache.set(key,g); }
     return g;
   }
   _geoBall(rx, ry, rz){
@@ -1875,7 +1868,6 @@ class WorldBuilder {
     }
     return null;
   }
-  modelRoots(){ return []; }  // unused helper kept out of the regen port
   snapshotModel(inst){
     // regen script backup: list insts of the subtree to rebuild later
     const snap=[inst];
@@ -1915,7 +1907,6 @@ class WorldBuilder {
     }
     return n;
   }
-  moveGrab(target){/* studio grab (used by tools.js) */}
 
   /* "AndYetItMoves" day-cycle port: Lighting:SetMinutesAfterMidnight()
    * modulated ambient sun tint over a 1440-minute loop, and the celestial

@@ -1,7 +1,7 @@
 /* ============================================================
  * skyAssets.js  the shipped client sky pack (content/sky/),
  * embedded as data URLs so WebGL can upload them from file://
- * (raw rel-fetches are CORS-tainted; see PORT.md section on assets).
+ * (raw rel-fetches are CORS-tainted; see AGENTS.md section on assets).
  * These are the actual 2007 sky textures: null_plainsky512_* faces
  * (G3D::Sky default set) + sun, sun-rays, moon+alpha-mask, lensflare.
  * ============================================================ */

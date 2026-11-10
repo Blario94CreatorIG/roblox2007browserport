@@ -105,7 +105,7 @@ class UI {
 
   /* Join-time performance warning.  A place's Workspace part total comes
    * from world.build(); the threshold is the browser port's join budget,
-   * not an engine constant (see PORT.md).  Shipped places below it:
+   * not an engine constant (see AGENTS.md).  Shipped places below it:
    * Crossroads ~1.7k, HappyHome ~2.0k; at/above it: Haunted Mansion ~2.7k,
    * RobloxHQ ~8.1k.  The banner follows the classic hint styling and can
    * be dismissed with a click (index.html onclick). */
@@ -142,11 +142,6 @@ class UI {
     if (this.$healthFill) this.$healthFill.style.height=(p*100)+'%';
     if (this.$healthHud && this.$healthHud.setAttribute)
       this.$healthHud.setAttribute('aria-valuenow', String(Math.round(p*100)));
-  }
-
-  info(text){
-    const el=document.getElementById('infoLine');
-    if (el){ el.style.display='block'; el.textContent=text; }
   }
 
   setTools(list){
@@ -208,14 +203,6 @@ class UI {
       this.onSelectTool && this.onSelectTool(i, this.tools[i]);
       window.Sounds.sound('switch.wav', {volume:0.35});
     }
-  }
-
-  menuOpen(className){
-    document.querySelectorAll('.menu').forEach(m=>{
-      if (!m.classList.contains(className)) m.style.display='none';
-    });
-    const m=document.querySelector('.'+className);
-    if (m) m.style.display = (m.style.display==='block')? 'none' : 'block';
   }
 
   /* HUD visibility for the join flow */

@@ -51,7 +51,7 @@
  *    direction * pressure * boundingRadius² to the body. This module
  *    applies that radial impulse to the welded assembly (the client's
  *    body/inverse-mass integrator is inlined, so the final Δv is capped
- *    and scaled  see web/PORT.md APPROX ledger). The blast does not
+ *    and scaled  see AGENTS.md APPROX ledger). The blast does not
  *    destroy parts or write Health.
  *  - Contact response is the client's FORCE model, not impulses:
  *    RBX::ContactConnector::update (0x611e00) computes a spring force
@@ -71,7 +71,7 @@
  *    7500 * min assembly mass (the client's shape scalar times the
  *    mined 7500 mass constant) and elasticity maps 0.5 -> 0.57 via
  *    FUN_005ed340.  Contact masses, the remaining scalar tie and the
- *    contact-manifold generator are APPROX; see web/PORT.md.
+ *    contact-manifold generator are APPROX; see AGENTS.md.
  * ============================================================ */
 (function(){
 "use strict";
@@ -575,22 +575,14 @@ class Dynamics {
    *     it: 4³ Center with all-Weld(2) faces + 2³ pips that INTERSET
    *     1 stud deep, all Smooth(0), no script welds  the pips ride only
    *     because the Weld faces bond overlapping neighbors.
-   *   - FUN_005a7c20 = rotation-only equality: cross products of the two
-   *     bodies' basis columns within tol (0.01 snap/weld, 0.05 glue).
-   *     Rotated parts do not auto-join axis-aligned ones (canon).
-   *   - FUN_005f7110 = the two face normals anti-parallel within 0.35 rad.
+   *   - FUN_005eb0a0 = face-axis gate: the two touching faces anti-parallel
+   *     within 0.35 rad (whole-body rotation equality was the old wrong
+   *     reading; a part rotated 90 degrees still joins a flush neighbor).
    *   - the positional face test FUN_005f7480 is ambiguous in flat
    *     pseudocode; shipped evidence (beacon 1-stud overlap) says Weld/
    *     Glue bonds overlap range  snap stays exact (see APPROX 20).
    * Order is load-bearing: hinge/motor first, then Weld face, exact
    * Studs↔Inlet snap, then Glue face (first hit wins). */
-  _rotEqual(a, b, tol){
-    const ra=(a.cf&&a.cf.rot)||[1,0,0,0,1,0,0,0,1];
-    const rb=(b.cf&&b.cf.rot)||[1,0,0,0,1,0,0,0,1];
-    const t=(tol==null)? 0.01 : tol;
-    for (let i=0;i<9;i++) if (Math.abs(ra[i]-rb[i])>t) return false;
-    return true;
-  }
   /* FUN_005eb0a0's face-center gate (the "centers ≤ tB" check  the tB
    * literal was not recovered, so it is ported as an overlap-area test):
    * a bond needs the two face RECTANGLES to overlap substantially, not just
@@ -2458,7 +2450,7 @@ class Dynamics {
    * against (beacons, Rally cars, the crane).  The classic body force
    * solver is for free rigid bodies; mover scripts write velocities and
    * force budgets directly, so this path stays a translation + AABB
-   * contact resolver (APPROX, documented in web/PORT.md). */
+   * contact resolver (APPROX, documented in AGENTS.md). */
   _stepDriven(a, dt){
     const w=this.world;
     const v=a.vel;
