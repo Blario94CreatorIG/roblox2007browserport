@@ -23,6 +23,10 @@ onto the window.
 Place data, sounds, character.rbxm and three.js r128 are all embedded in
 `web/`. No network, no install.
 
+## MiiEngine avatars
+
+This fork includes an optional MiiEngine avatar import. Create a Mii in [MiiEngine](https://mii.nxw.pw), export **Whole body** as a binary **.glb**, then import it from the game start page. The selected model is stored locally in your browser and follows the player root. See [MIIENGINE-AVATARS.md](MIIENGINE-AVATARS.md) for setup and current limitations.
+
 ## Content and trust
 
 The bundled places are archived 2007 Roblox content, included for
