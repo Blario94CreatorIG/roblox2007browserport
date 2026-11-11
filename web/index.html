@@ -234,6 +234,18 @@ canvas.viewport{ display:block; width:100%; height:100%; }
    39 40 hotspot is the arrow tip inside the 80×80 transparent canvas */
 body{ cursor:url('content/textures/ArrowCursor.png') 39 40, auto; }
 input{ cursor:text; }
+
+/* MiiEngine import panel */
+.avatarCfg .partTabsRow,.avatarCfg .swatches,.avatarCfg > .cfgHint,
+.avatarCfg .tshirtRow,.avatarCfg .tshirtPreview{display:none!important}
+.miiImport{margin-top:10px;padding:10px 0 2px;border-top:1px dashed #c3cfdb}
+.miiImportTitle{font-size:14px;font-weight:bold;color:#24405c}
+.miiImport p{font-size:12px;line-height:1.5;color:#425d75;margin:5px 0 8px}
+.miiImport a{color:#2469a8}
+.miiImportActions{display:flex;gap:7px;flex-wrap:wrap}
+.miiStatus{font-size:11px;color:#315b35;margin-top:7px;min-height:15px}
+.miiHint{font-size:10.5px;color:#789;line-height:1.45;margin-top:5px}
+
 </style>
 </head>
 <body>
@@ -315,6 +327,17 @@ input{ cursor:text; }
         <label for="userName">Username:</label>
         <input id="userName" maxlength="20" spellcheck="false" placeholder="Player1">
       </div>
+      <div class="miiImport">
+        <div class="miiImportTitle">MiiEngine Avatar</div>
+        <p>Create your character in <a href="https://mii.nxw.pw" target="_blank" rel="noopener noreferrer">MiiEngine</a>, export it as a <b>GLB</b> 3D model, then import it here.</p>
+        <div class="miiImportActions">
+          <button type="button" id="miiBrowse" class="tshirtBtn">Import Mii (.glb)</button>
+          <button type="button" id="miiClear" class="tshirtBtn">Use Classic Avatar</button>
+          <input type="file" id="miiFile" accept=".glb,model/gltf-binary,application/octet-stream" hidden>
+        </div>
+        <div id="miiStatus" class="miiStatus" role="status">Classic 2007 avatar selected</div>
+        <div class="miiHint">Your Mii is saved in this browser. The original rig still handles collision and game scripts; the imported Mii is the visible character.</div>
+      </div>
       <div class="partTabsRow">
         <div class="partTabs" id="bodyPartTabs"></div>
         <!-- Reset = the shipped character.rbxm rig again (js/startpage.js) -->
@@ -359,6 +382,7 @@ input{ cursor:text; }
 <script src="js/headmesh.js"></script>
 <script src="js/world.js"></script>
 <script src="js/character.js"></script>
+<script src="js/mii-avatar.js"></script>
 <script src="js/physics.js"></script>
 <script src="js/dynamics.js"></script>
 <script src="js/tools.js"></script>
