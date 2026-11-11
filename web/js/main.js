@@ -88,15 +88,19 @@ function boot(){
   let gpuErr=null;
   if (webglSupported()){
     try {
-      /* The 2007 client renders through G3D's fixed-function OpenGL
-       * RenderDevice.  RBLXg3d is the literal state-layer port; it owns
-       * the GL context and consumes the same three.js scene graph.
-       * preserveDrawingBuffer lets callers extract pixels. */
-      const opts={ canvas, antialias:true, preserveDrawingBuffer:true,
+      /* Use the same native Three.js WebGLRenderer architecture as
+       * MiiEngine.  The legacy RBLXg3d fixed-function compatibility device
+       * is no longer in the render path; Roblox's world builder still
+       * supplies the scene graph, while Three.js owns GPU submission.
+       *
+       * Keep a transparent canvas and preserved pixels for the existing
+       * capture helpers. MiiEngine's renderer is alpha-enabled, non-MSAA,
+       * and uses the browser's high-performance GPU when available. */
+      const opts={ canvas, alpha:true, antialias:false, stencil:false,
+                   preserveDrawingBuffer:true,
                    powerPreference:'high-performance' };
-      renderer=window.RBLXg3d
-        ? new window.RBLXg3d.Renderer(opts)
-        : new THREE.WebGLRenderer(opts);
+      renderer=new THREE.WebGLRenderer(opts);
+      if (renderer.setClearAlpha) renderer.setClearAlpha(0);
     } catch(e){ gpuErr=e; renderer=null; }
   } else {
     gpuErr=new Error('WebGL is not available: the browser did not create a WebGL context.');
