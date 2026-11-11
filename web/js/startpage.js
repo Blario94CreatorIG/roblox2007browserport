@@ -207,6 +207,74 @@ if (clearBtn){
   clearBtn.onclick=function(){ click(); setShirt(null); };
 }
 
+/* --------------------------- MiiEngine import --------------------------- */
+/* MiiEngine exports self-contained GLB files. Keep the file as a data URL so
+ * the browser-port remains offline and the selected Mii survives reloads. */
+var miiBrowse=document.getElementById('miiBrowse');
+var miiClear=document.getElementById('miiClear');
+var miiFile=document.getElementById('miiFile');
+var miiStatus=document.getElementById('miiStatus');
+var MII_MAX_BYTES=2.5*1024*1024;
+
+function renderMiiStatus(){
+  if (!miiStatus) return;
+  miiStatus.textContent=window.RBLXplayer.miiGlb
+    ? 'MiiEngine avatar selected  (applies when you join or respawn)'
+    : 'Classic 2007 avatar selected';
+}
+function setMiiModel(dataUrl){
+  window.RBLXplayer.miiGlb=dataUrl||null;
+  save();
+  renderMiiStatus();
+}
+if (miiBrowse && miiFile){
+  miiBrowse.addEventListener('click',function(){
+    click();
+    miiFile.value='';
+    miiFile.click();
+  });
+  miiFile.addEventListener('change',function(){
+    var f=miiFile.files&&miiFile.files[0];
+    if (!f) return;
+    if (!/\.glb$/i.test(f.name)){
+      if (miiStatus) miiStatus.textContent='Please export a binary .glb model from MiiEngine.';
+      return;
+    }
+    if (f.size>MII_MAX_BYTES){
+      if (miiStatus) miiStatus.textContent='Model is too large. Choose a GLB file under 2.5 MB.';
+      return;
+    }
+    var reader=new FileReader();
+    reader.onload=function(){
+      try{
+        var bytes=new Uint8Array(reader.result);
+        if (bytes.length<12 || new DataView(bytes.buffer).getUint32(0,true)!==0x46546c67){
+          throw new Error('Invalid GLB file.');
+        }
+        var binary='';
+        for (var i=0;i<bytes.length;i+=0x8000){
+          binary+=String.fromCharCode.apply(null,bytes.subarray(i,Math.min(i+0x8000,bytes.length)));
+        }
+        setMiiModel('data:model/gltf-binary;base64,'+btoa(binary));
+        click();
+      }catch(err){
+        if (miiStatus) miiStatus.textContent=err.message||'Could not read that GLB file.';
+      }
+    };
+    reader.onerror=function(){
+      if (miiStatus) miiStatus.textContent='Could not read that file.';
+    };
+    reader.readAsArrayBuffer(f);
+  });
+}
+if (miiClear){
+  miiClear.addEventListener('click',function(){
+    click();
+    setMiiModel(null);
+  });
+}
+renderMiiStatus();
+
 /* ---------------------------- logo bounce ----------------------------- */
 /* Free fall under gravity from a small apex; each ground contact adds a
  * squash impulse to a damped spring (scaleY 1-sq / scaleX 1+0.55*sq at the
