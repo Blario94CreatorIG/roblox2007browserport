@@ -27,7 +27,8 @@ try {
 }
 
 function save(){
-  try { localStorage.setItem('RBLXstartpage', JSON.stringify(window.RBLXplayer)); } catch(e){}
+  try { localStorage.setItem('RBLXstartpage', JSON.stringify(window.RBLXplayer)); return true; }
+  catch(e){ return false; }
 }
 
 function click(){
@@ -223,9 +224,15 @@ function renderMiiStatus(){
     : 'Classic 2007 avatar selected';
 }
 function setMiiModel(dataUrl){
+  var previous=window.RBLXplayer.miiGlb||null;
   window.RBLXplayer.miiGlb=dataUrl||null;
-  save();
+  if (!save()){
+    window.RBLXplayer.miiGlb=previous;
+    if (miiStatus) miiStatus.textContent='Could not save the Mii in this browser. Try a smaller GLB file.';
+    return false;
+  }
   renderMiiStatus();
+  return true;
 }
 if (miiBrowse && miiFile){
   miiBrowse.addEventListener('click',function(){
@@ -255,8 +262,7 @@ if (miiBrowse && miiFile){
         for (var i=0;i<bytes.length;i+=0x8000){
           binary+=String.fromCharCode.apply(null,bytes.subarray(i,Math.min(i+0x8000,bytes.length)));
         }
-        setMiiModel('data:model/gltf-binary;base64,'+btoa(binary));
-        click();
+        if (setMiiModel('data:model/gltf-binary;base64,'+btoa(binary))) click();
       }catch(err){
         if (miiStatus) miiStatus.textContent=err.message||'Could not read that GLB file.';
       }
